@@ -1,0 +1,219 @@
+---
+title: "ING Lion's Den Pre-selection assignment"
+author: "BifOfData - Jakub Sochacki, Michał Rejmak, Tomasz Kuczyński"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    thumbnails: false
+    lightbox: true
+    gallery: true
+    highlight: pygments
+---
+## Introduction
+In this report we are analyzing the historical data about the hard coal consumption data 
+– monthly series per capita from July 1994 to December 2020 - 318 observations. Data has been collected by the National Statistic Office.
+
+## Goal of the analysis  
+**1)** Understand the data  
+**2)** Time series decomposition  
+**3)** Visualization of trends and seasonality  
+**4)** Anomaly detection  
+**5)** Examine stationarity and autocorrelation  
+**6)** Selection of the best prediction method  
+**6)** Forecast the hard coal consumption for 2021  
+
+## Preparation
+Libraries to be used:
+```{r start, echo=TRUE, message=FALSE, warning = FALSE}
+library(readxl)
+library(rmdformats)
+library(tidyverse)
+library(forecast)
+library(dplyr)
+```
+First step of analyzing time series data starts with a time plot.  
+That is, the observations are plotted against the time of observation, with consecutive observations joined by straight lines.
+```{r start1, echo=TRUE, message=FALSE, warning = FALSE}
+Lions_Den_data = read_excel("Lions_Den_data.xlsx")
+ggplot(Lions_Den_data, aes(x=DATE, y = `Hard coal consumption per capita [tones]`)) + geom_line() + ggtitle("Hard coal consumption 1994 - 2020")
+
+```
+  
+Data preparation process for further analysis:  
+data_ts is the time series object with frequency of 12 months and beginning in July 1994
+```{r ts_preparation, echo=TRUE, message=FALSE}
+data_ts <- ts(Lions_Den_data$`Hard coal consumption per capita [tones]`, frequency = 12, start = c(1994, 7))
+```
+As it is visible on the time series plot, there is a high and regular variability in hard coal consumption.  
+To examine where it is coming from, it is imperative to analyze the seasonality of the time series.  
+When investigating the seasonal plot of the data, it is easy to observe that the coal consumption changes over each year.  
+Given that, it can be sated that the studied element depends on the season.  
+It is specifically visible that the magnitude of the coal consumption increases July through February, and decreases February through July.  
+```{r season_plot, echo=TRUE, message=FALSE, warning = FALSE}
+ggseasonplot(data_ts, year.labels=TRUE, year.labels.left=TRUE, col=rainbow(n=25, start = 0, end = 24/25, alpha = 0.6)) +
+  ylab("Hard coal consumption per capita [tones]") +
+  ggtitle("Seasonal plot: Hard coal consumption")
+```
+```{r season_box}
+boxplot(data_ts~cycle(data_ts))
+```
+Analogical data representation split into separate plots, aiming to better show the diminishing seasonality deviations:
+```{r date_conversion, echo=TRUE, message=FALSE, warning = FALSE}
+library(ggplot2)
+data <- Lions_Den_data
+data <- ?mutate(data, year = as.numeric(substring(DATE, 1, 4)), month = as.numeric(substring(DATE, 6, 7)), month_name = month.name[month])
+# plots for each year
+ggplot(data, aes(x=month, y = `Hard coal consumption per capita [tones]`)) + geom_line() + facet_wrap(~year)
+```
+Collection of plots portraying charcoal consumption volatility over the years, segregated by months.
+Together with furhter analysis, discernible becomes the fact that the fluctuations in hard coal consumption
+are notably less conspicuous during the summer period. Furthermore, there is also a matter of vital importance during
+the year 2006 where major increase is observable.
+
+```{r months}
+# ggplot(data, aes(x=year, y = `Hard coal consumption per capita [tones]`)) + geom_line() + facet_wrap(~month)
+```
+## Time series decomposition
+In order to properly analyze the time series, it is indispensable to perform a decomposition into three separate factors:  
+**1.** Trend  
+**2.** Seasonality  
+**3.** Random / remainder factor  
+Since the seasonal variation declines with the level of the series, a multiplicative model appears to be more accurate.  
+Process of multiplicative time series decomposition:  
+```{r decomposition}
+# decomposition
+data_decomp = decompose(data_ts, type="multiplicative")
+plot(data_decomp)
+```
+Seasonally adjusted time series:
+```{r season_removed}
+ data_deseason <- data_ts / data_decomp$seasonal       # <<< tutaj sezonowość jest zawsze dodatnia
+# plot(data_deseason)
+
+autoplot(data_ts, series="Data") +
+  autolayer(data_deseason, series="Seasonally adjusted") + ylab("Hard coal consumption per capita [tonnes]") + ggtitle("Seasonally adjusted hard coal consumption over years")
+```
+
+```{r czank2, echo=FALSE}
+
+autoplot(data_ts, series="Data") +
+  autolayer(trendcycle(stl(data_ts, s.window = "periodic")), series="Trend-cycle") + geom_smooth(method=lm, aes(colour="Linear trend fit"))+
+  scale_colour_manual(values=c("red", "blue", "cyan3")) + ylab("Hard coal consumption per capita [tonnes]") + ggtitle("Trends of hard coal consumption over years")
+```
+
+```{r stl}
+# stl decomposition
+data_stl <- stl(data_ts, s.window = "periodic")
+plot(data_stl)
+
+# deseasoned data using stl
+data_stl_deseason <- data_ts / seasonal(data_stl)     # <<< tutaj sezonowość jest czasami ujemna
+plot(data_stl_deseason)
+
+
+
+```
+```{r forecasts}
+
+data_ts_seasadj <- seasadj(data_stl)
+plot(data_ts_seasadj, type="l")
+seasonplot(data_ts_seasadj, 12, col=rainbow(25), year.labels=TRUE, main="Seasonal plot: Coal consumption after deseasoning") # seasonal frequency set as 12 for monthly data.
+
+
+# nie ma dużej różnicy
+data_detrend <- lm(data_ts ~ c(1:length(data_ts)))
+plot(resid(data_detrend), type="l")  # resid(data_detrend) contains the de-trended series.
+
+# ????
+fit <- HoltWinters(data_ts, beta=FALSE, gamma=FALSE)      
+fit
+f<-forecast(fit, 1)  
+plot(forecast(fit, 12), xlab="Year") 
+
+# ETS
+fit <- ets(data_ts)
+fit
+plot(forecast(fit), xlab="Time")
+```
+
+
+
+
+```{r czank3}
+# outliers ? <<<<<<<<<<<<<<<<<<<<<<<<<<
+boxplot.stats(data_ts)$out
+
+
+
+```
+
+
+```{r acf}
+acf(data_ts, main="Autocorrelation")         # many spikes outside significant zone - data is NOT RANDOM
+pacf(data_ts, main="Partial Autocorrelation")
+
+acf(diff(diff(data_ts, 12), 1), main="Autocorrelation - double diff")          # not many spikes outside significant zone data is RANDOM
+pacf(diff(diff(data_ts, 12), 1), main="Partial Autocorrelation - double diff")
+
+
+library(forecast)
+model_arima <- auto.arima(data_ts)
+
+library(tseries)
+plot.ts(model_arima$residuals)
+
+# ACF for stationary data
+acf(ts(model_arima$residuals), main="ACF Residual")
+```
+
+```{r forecast}
+forecast_arima <- forecast(model_arima, level=c(95), h=1*12)
+plot(forecast_arima)
+```
+
+```{r diff}
+cbind("Coal consumption" = data_ts,
+      "Change in coal" = diff(data_ts, 12),
+      "Double diff" = diff(diff(data_ts, 12), 1)
+      ) %>% autoplot(facets=TRUE)
+```
+
+```{r stationary_test}
+library(urca)
+data_ts %>% ur.kpss() %>% summary()
+
+diff(data_ts, 12) %>% ur.kpss() %>% summary()
+
+diff(diff(data_ts, 12),1) %>% ur.kpss() %>% summary()
+
+# wystarczy 1 operacja diff, aby otrzymać stationary data
+ndiffs(data_ts)
+
+# test pierwiastka jednostkowego
+
+```
+
+```{r test}
+Box.test (forecast_arima, lag = 1, type = "Ljung")
+
+```
+
+```{r anomaly}
+library(anomalize)
+data_tibble <- Lions_Den_data %>% rownames_to_column() %>% as_tibble() %>%
+  mutate(date = as.Date(DATE)) %>% select(-one_of('DATE'))
+
+data_tibble %>% time_decompose(`Hard coal consumption per capita [tones]`, method="stl", frequency = "auto", trend = "auto") %>%
+  anomalize(remainder, method="iqr", alpha=0.05, max_anoms = 0.2) %>% plot_anomaly_decomposition()
+
+# now for deseasoned data
+data_tibble_deseason <- data_deseason %>% as_tibble() %>%
+  mutate(date = as.Date(Lions_Den_data$DATE)) %>% select(-one_of('DATE'))
+
+data_tibble_deseason %>% time_decompose(x, method="stl", frequency = "auto", trend = "auto") %>%
+  anomalize(remainder, method="iqr", alpha=0.05, max_anoms = 0.2) %>% plot_anomaly_decomposition()
+
+
+
+```
